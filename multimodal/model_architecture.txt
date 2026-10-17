@@ -1,0 +1,377 @@
+MODEL ARCHITECTURE
+Multimodal Fusion of Visual and Lesion Features for Mobile-Based Severity Assessment of Rice Bacterial Leaf Blight
+
+1. OVERVIEW
+
+The proposed framework is a multimodal, segmentation-driven pipeline for five-stage
+severity classification of rice Bacterial Leaf Blight (BLB). It combines:
+
+    (1) Lightweight U-Net leaf segmentation
+    (2) HSV-based lesion-mask generation
+    (3) MobileNetV2 with CBAM for visual feature extraction
+    (4) Lesion-mask feature extraction
+    (5) Structured lesion-descriptor feature extraction
+    (6) Feature-level multimodal fusion
+    (7) Fully connected classification for five BLB severity stages
+
+The segmentation and classification components are trained separately and are combined
+during inference and mobile deployment.
+
+
+2. INPUTS
+
+Leaf segmentation:
+
+    Input size: 256 x 256 pixels
+    Input type: RGB image
+
+Multimodal classifier:
+
+    RGB input size: 224 x 224 pixels
+    Lesion-mask input: 16 x 16 pixels
+    Structured descriptor input: 6 features
+
+
+3. STAGE 1: LEAF SEGMENTATION
+
+A lightweight U-Net is used to identify the rice leaf region and reduce the influence
+of background regions.
+
+    Input
+       |
+       v
+    256 x 256 x 3 RGB image
+       |
+       v
+    Lightweight U-Net
+       |
+       v
+    Binary leaf mask
+
+Training configuration:
+
+    Loss function:       Binary Cross-Entropy
+    Optimizer:           Adam
+    Learning rate:       1 x 10^-4
+    Maximum epochs:      30
+
+The predicted leaf mask is subsequently used to restrict HSV-based lesion detection
+to the rice leaf region.
+
+
+4. STAGE 2: HSV-BASED LESION MASK GENERATION
+
+The segmented leaf region is converted to HSV colour space to identify visible BLB
+lesion regions.
+
+Multiple HSV ranges are used to capture characteristic colour changes associated with
+BLB symptoms, including:
+
+    - Early yellowing
+    - Intermediate chlorosis
+    - Later necrotic regions
+
+The HSV masks are combined and restricted to the leaf region obtained from U-Net.
+
+The resulting lesion mask is used for:
+
+    (1) lesion-mask feature extraction
+    (2) structured lesion descriptor extraction
+
+
+5. STAGE 3: VISUAL FEATURE BRANCH
+
+The RGB image is processed using an ImageNet-pretrained MobileNetV2 backbone.
+
+    Input
+       |
+       v
+    224 x 224 x 3 RGB image
+       |
+       v
+    MobileNetV2
+       |
+       v
+    CBAM
+       |
+       v
+    Global Average Pooling
+       |
+       v
+    1280-dimensional visual feature
+
+
+Visual branch configuration:
+
+    Backbone:             MobileNetV2
+    Pretraining:          ImageNet
+    Backbone training:    Frozen
+    Attention module:     CBAM
+    Pooling:              Global Average Pooling
+    Output dimension:     1280
+
+CBAM is applied to the feature maps produced by the MobileNetV2 visual branch
+before global average pooling.
+
+The visual representation is:
+
+    F_visual ∈ R^1280
+
+
+6. STAGE 4: LESION-MASK FEATURE BRANCH
+
+The generated lesion mask is resized to 16 x 16 pixels and flattened.
+
+    16 x 16 lesion mask
+            |
+            v
+         Flatten
+            |
+            v
+    256-dimensional vector
+            |
+            v
+       Dense(128)
+            |
+            v
+    Batch Normalization
+            |
+            v
+       Dropout(0.3)
+            |
+            v
+    128-dimensional feature
+
+The resulting lesion-mask representation is:
+
+    F_mask ∈ R^128
+
+CBAM is not applied to the lesion-mask branch.
+
+
+7. STAGE 5: STRUCTURED LESION-DESCRIPTOR BRANCH
+
+Six handcrafted lesion descriptors are extracted from the lesion region:
+
+    1. Lesion size / lesion area percentage
+    2. GLCM energy
+    3. GLCM homogeneity
+    4. Mean hue
+    5. GLCM correlation
+    6. Dominant lesion colour
+
+The descriptor vector contains six input features.
+
+    6-dimensional descriptor vector
+              |
+              v
+          Dense(64)
+              |
+              v
+      Batch Normalization
+              |
+              v
+          Dropout(0.2)
+              |
+              v
+      64-dimensional feature
+
+The resulting descriptor representation is:
+
+    F_desc ∈ R^64
+
+
+8. STAGE 6: FEATURE-LEVEL MULTIMODAL FUSION
+
+The three feature representations are concatenated:
+
+    Visual features:          1280
+    Lesion-mask features:      128
+    Descriptor features:        64
+                              ----
+    Fused representation:     1472
+
+Therefore:
+
+    1280 + 128 + 64 = 1472
+
+The fused feature vector is:
+
+    F_fusion ∈ R^1472
+
+
+9. STAGE 7: FUSION AND CLASSIFICATION HEAD
+
+The 1472-dimensional fused representation is passed through the classification head.
+
+    F_fusion
+        |
+        v
+    Dense(512) + ReLU
+        |
+        v
+    Batch Normalization
+        |
+        v
+    Dropout(0.5)
+        |
+        v
+    Dense(128) + ReLU
+        |
+        v
+    Dense(5) + Softmax
+        |
+        v
+    BLB Severity Stage
+
+
+The five output classes are:
+
+    Stage 1
+    Stage 2
+    Stage 3
+    Stage 4
+    Stage 5
+
+
+10. CLASSIFIER TRAINING
+
+The multimodal classifier is trained after the leaf-segmentation model.
+
+Training configuration:
+
+    Optimizer:                  Adam
+    Learning rate:              1 x 10^-4
+    Loss function:              Categorical Cross-Entropy
+    Label smoothing:            0.1
+    Batch size:                 64
+    Maximum epochs:              40
+    Early stopping criterion:   Validation loss
+    Early stopping patience:    5 epochs
+    Best weights:               Restored based on validation loss
+
+The MobileNetV2 backbone is initialized with ImageNet-pretrained weights and kept
+frozen during classifier training.
+
+
+11. COMPLETE INFERENCE PIPELINE
+
+                         RGB IMAGE
+                             |
+             +---------------+---------------+
+             |                               |
+             v                               v
+       U-Net Segmentation             MobileNetV2
+             |                           + CBAM
+             v                               |
+        Leaf Mask                             v
+             |                         1280-D Visual
+             v                            Feature
+      HSV Lesion Mask
+             |
+       +-----+----------------+
+       |                      |
+       v                      v
+  16 x 16 Mask        Six Lesion Descriptors
+       |                      |
+       v                      v
+  128-D Mask Feature    64-D Descriptor Feature
+       |                      |
+       +----------+-----------+
+                  |
+                  v
+          Feature-Level Fusion
+                  |
+                  v
+             1472-D Vector
+                  |
+                  v
+              Dense(512)
+                  |
+                  v
+              Dense(128)
+                  |
+                  v
+           Softmax Classifier
+                  |
+                  v
+          BLB Severity Stage
+          (Stage 1 to Stage 5)
+
+
+12. MULTIMODAL FEATURE REPRESENTATION
+
+The final multimodal representation is obtained as:
+
+    F_fusion = [F_visual ; F_mask ; F_desc]
+
+where:
+
+    F_visual ∈ R^1280
+    F_mask   ∈ R^128
+    F_desc   ∈ R^64
+
+and therefore:
+
+    F_fusion ∈ R^1472
+
+
+13. CLASSIFICATION OUTPUT
+
+The final softmax layer contains five neurons corresponding to the five BLB
+severity stages.
+
+    Output = Softmax(Dense(128))
+
+    Number of classes = 5
+
+The predicted class corresponds to the BLB severity stage with the highest
+softmax probability.
+
+
+14. DEPLOYMENT
+
+The trained models are converted to TensorFlow Lite for mobile deployment.
+
+The complete workflow is integrated into the Paddy Pathologist Android application
+for offline field-level inference.
+
+The mobile workflow uses:
+
+    1. U-Net for rice-leaf detection/segmentation
+    2. HSV-based lesion-mask generation
+    3. MobileNetV2-CBAM visual feature extraction
+    4. Lesion-mask feature extraction
+    5. Structured lesion-descriptor extraction
+    6. Feature-level multimodal fusion
+    7. Five-stage BLB severity classification
+
+
+15. ARCHITECTURE SUMMARY
+
+    Component                         Output
+
+    U-Net leaf segmentation          Binary leaf mask
+    HSV lesion extraction            Binary lesion mask
+    MobileNetV2 + CBAM               1280-D visual feature
+    Lesion-mask encoder              128-D feature
+    Descriptor encoder               64-D feature
+    Feature-level fusion             1472-D feature
+    Dense fusion layer               512-D
+    Dense classification layer       128-D
+    Softmax output                   5 severity classes
+
+
+16. REPRODUCIBILITY NOTE
+
+This file describes the multimodal architecture implemented for the present study.
+
+The implementation should be used together with the accompanying notebook,
+requirements file, README, and dataset description.
+
+The BLBVisionDB dataset is not redistributed with the repository. Dataset access is
+subject to the data-availability statement provided in the manuscript.
+
+The repository contains the implementation corresponding to the present multimodal
+framework and is distinct from the earlier RCAMNet implementation based on
+Detectron2.
